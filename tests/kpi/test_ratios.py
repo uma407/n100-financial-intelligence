@@ -102,3 +102,13 @@ def test_icr_label_debt_free():
 # 16. Asset Turnover Zero Assets
 def test_asset_turnover_zero_assets():
     assert asset_turnover(100, 0) is None
+
+
+    # 17. ICR Warning
+def test_icr_warning():
+    assert icr_warning(1.2) is True
+
+
+# 18. Net Debt
+def test_net_debt():
+    assert net_debt(100, 30) == 70
