@@ -124,7 +124,43 @@ def run_screener(custom_filters=None):
         )
 
     return filtered
+def preset_screen(name):
+    presets = {
+        "quality_compounder": {
+            "operating_profit_margin_min": 25,
+            "free_cash_flow_min": 500,
+            "revenue_cagr_5yr_min": 20,
+        },
+        "value_pick": {
+            "operating_profit_margin_min": 25,
+            "asset_turnover_min": 1,
+            "free_cash_flow_min": 100,
+        },
+        "growth_accelerator": {
+            "pat_cagr_5yr_min": 25,
+            "revenue_cagr_5yr_min": 20,
+            "operating_profit_margin_min": 10,
+        },
+        "dividend_champion": {
+            "free_cash_flow_min": 4000,
+            "operating_profit_margin_min": 40,
+        },
+        "debt_free_blue_chip": {
+            "debt_to_equity_max": 0,
+            "operating_profit_margin_min": 50,
+            "free_cash_flow_min": 4000,
+        },
+        "turnaround_watch": {
+            "revenue_cagr_5yr_min": 25,
+            "free_cash_flow_min": 200,
+            "operating_profit_margin_min": 5,
+        },
+    }
 
+    if name not in presets:
+        raise ValueError("Unknown preset")
+
+    return run_screener(presets[name])
 
 if __name__ == "__main__":
     result = run_screener(
