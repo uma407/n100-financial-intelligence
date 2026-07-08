@@ -14,33 +14,77 @@ def load_config(config_path=CONFIG_PATH):
         return yaml.safe_load(file)
 
 
-def load_financial_ratios(db_path=DB_PATH):
+def load_screener_data(db_path=DB_PATH):
     conn = sqlite3.connect(db_path)
-    df = pd.read_sql_query("SELECT * FROM financial_ratios", conn)
+
+    ratios = pd.read_sql_query("SELECT * FROM financial_ratios", conn)
+    sectors = pd.read_sql_query("SELECT * FROM sectors", conn)
+
     conn.close()
+
+    df = ratios.merge(sectors, on="company_id", how="left")
     return df
+
+
+def winsorized_score(series, higher_is_better=True):
+    series = pd.to_numeric(series, errors="coerce")
+
+    if series.dropna().empty:
+        return pd.Series([0] * len(series), index=series.index)
+
+    p10 = series.quantile(0.10)
+    p90 = series.quantile(0.90)
+
+    if p10 == p90:
+        return pd.Series([50] * len(series), index=series.index)
+
+    clipped = series.clip(lower=p10, upper=p90)
+    score = ((clipped - p10) / (p90 - p10)) * 100
+
+    if not higher_is_better:
+        score = 100 - score
+
+    return score.fillna(0)
 
 
 def add_composite_quality_score(df):
-    score_columns = [
-        "net_profit_margin_pct",
-        "operating_profit_margin_pct",
-        "asset_turnover",
-        "free_cash_flow_cr",
-        "revenue_cagr_5yr",
-        "pat_cagr_5yr",
-        "eps_cagr_5yr",
-    ]
+    df = df.copy()
 
-    available_columns = [col for col in score_columns if col in df.columns]
+    grouped_scores = []
 
-    if not available_columns:
-        df["composite_quality_score"] = 0
-        return df
+    for _, group in df.groupby("broad_sector", dropna=False):
+        group = group.copy()
 
-    df["composite_quality_score"] = df[available_columns].mean(axis=1, skipna=True)
+        group["score_roe"] = winsorized_score(group["roe"])
+        group["score_roce"] = 0
+        group["score_npm"] = winsorized_score(group["net_profit_margin_pct"])
 
-    return df
+        group["score_fcf_conversion"] = winsorized_score(group["fcf_conversion_rate_pct"])
+        group["score_cfo_pat"] = 0
+        group["score_fcf_positive"] = (group["free_cash_flow_cr"] > 0).astype(int) * 100
+
+        group["score_revenue_cagr"] = winsorized_score(group["revenue_cagr_5yr"])
+        group["score_pat_cagr"] = winsorized_score(group["pat_cagr_5yr"])
+
+        group["score_de"] = winsorized_score(group["debt_to_equity"], higher_is_better=False)
+        group["score_icr"] = winsorized_score(group["interest_coverage"])
+
+        group["composite_quality_score"] = (
+            group["score_roe"] * 0.15
+            + group["score_roce"] * 0.10
+            + group["score_npm"] * 0.10
+            + group["score_fcf_conversion"] * 0.15
+            + group["score_cfo_pat"] * 0.10
+            + group["score_fcf_positive"] * 0.05
+            + group["score_revenue_cagr"] * 0.10
+            + group["score_pat_cagr"] * 0.10
+            + group["score_de"] * 0.10
+            + group["score_icr"] * 0.05
+        )
+
+        grouped_scores.append(group)
+
+    return pd.concat(grouped_scores, ignore_index=True)
 
 
 def apply_threshold_filters(df, filters):
@@ -50,12 +94,13 @@ def apply_threshold_filters(df, filters):
         if threshold is None:
             continue
 
-        if filter_name == "roe_min" and "return_on_equity_pct" in filtered.columns:
-            filtered = filtered[filtered["return_on_equity_pct"] >= threshold]
+        if filter_name == "roe_min" and "roe" in filtered.columns:
+            filtered = filtered[filtered["roe"] >= threshold]
 
         elif filter_name == "debt_to_equity_max" and "debt_to_equity" in filtered.columns:
             filtered = filtered[
-                (filtered["debt_to_equity"].isna())
+                (filtered["broad_sector"] == "Financials")
+                | (filtered["debt_to_equity"].isna())
                 | (filtered["debt_to_equity"] <= threshold)
             ]
 
@@ -77,29 +122,11 @@ def apply_threshold_filters(df, filters):
                 | (filtered["interest_coverage"] >= threshold)
             ]
 
-        elif filter_name == "net_profit_min" and "net_profit_margin_pct" in filtered.columns:
-            filtered = filtered[filtered["net_profit_margin_pct"] >= threshold]
-
         elif filter_name == "eps_cagr_min" and "eps_cagr_5yr" in filtered.columns:
             filtered = filtered[filtered["eps_cagr_5yr"] >= threshold]
 
         elif filter_name == "asset_turnover_min" and "asset_turnover" in filtered.columns:
             filtered = filtered[filtered["asset_turnover"] >= threshold]
-
-        elif filter_name == "sales_min":
-            # Sales is not stored in financial_ratios in the current schema.
-            # This filter is skipped safely.
-            continue
-
-        elif filter_name in [
-            "pe_max",
-            "pb_max",
-            "dividend_yield_min",
-            "market_cap_min",
-        ]:
-            # These fields are not available in the current financial_ratios schema.
-            # Skipping safely keeps the engine robust.
-            continue
 
     return filtered
 
@@ -113,17 +140,13 @@ def run_screener(custom_filters=None):
     if custom_filters:
         filters.update(custom_filters)
 
-    df = load_financial_ratios()
+    df = load_screener_data()
     df = add_composite_quality_score(df)
     filtered = apply_threshold_filters(df, filters)
 
-    if "composite_quality_score" in filtered.columns:
-        filtered = filtered.sort_values(
-            by="composite_quality_score",
-            ascending=False
-        )
+    return filtered.sort_values("composite_quality_score", ascending=False)
 
-    return filtered
+
 def preset_screen(name):
     presets = {
         "quality_compounder": {
@@ -162,6 +185,7 @@ def preset_screen(name):
 
     return run_screener(presets[name])
 
+
 if __name__ == "__main__":
     result = run_screener(
         {
@@ -171,4 +195,4 @@ if __name__ == "__main__":
     )
 
     print("Filtered rows:", len(result))
-    print(result.head())
+    print(result[["company_id", "year", "broad_sector", "composite_quality_score"]].head())
