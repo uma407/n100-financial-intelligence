@@ -24,29 +24,71 @@ DB_FILE = PROJECT_ROOT / "nifty100.db"
 
 
 def load_company_data(company_id="ABB"):
-
     conn = sqlite3.connect(DB_FILE)
 
     query = """
     SELECT
         c.id,
         c.company_name,
-        f.year,
-        p.sales,
-        p.net_profit,
-        f.return_on_equity_pct,
-        f.debt_to_equity,
-        f.operating_profit_margin_pct,
-        f.composite_quality_score
+
+        (
+            SELECT f.year
+            FROM financial_ratios f
+            WHERE f.company_id = c.id
+            ORDER BY f.year DESC
+            LIMIT 1
+        ) AS year,
+
+        (
+            SELECT p.sales
+            FROM profitandloss p
+            WHERE p.company_id = c.id
+            ORDER BY p.year DESC
+            LIMIT 1
+        ) AS sales,
+
+        (
+            SELECT p.net_profit
+            FROM profitandloss p
+            WHERE p.company_id = c.id
+            ORDER BY p.year DESC
+            LIMIT 1
+        ) AS net_profit,
+
+        (
+            SELECT f.return_on_equity_pct
+            FROM financial_ratios f
+            WHERE f.company_id = c.id
+            ORDER BY f.year DESC
+            LIMIT 1
+        ) AS return_on_equity_pct,
+
+        (
+            SELECT f.debt_to_equity
+            FROM financial_ratios f
+            WHERE f.company_id = c.id
+            ORDER BY f.year DESC
+            LIMIT 1
+        ) AS debt_to_equity,
+
+        (
+            SELECT f.operating_profit_margin_pct
+            FROM financial_ratios f
+            WHERE f.company_id = c.id
+            ORDER BY f.year DESC
+            LIMIT 1
+        ) AS operating_profit_margin_pct,
+
+        (
+            SELECT f.composite_quality_score
+            FROM financial_ratios f
+            WHERE f.company_id = c.id
+            ORDER BY f.year DESC
+            LIMIT 1
+        ) AS composite_quality_score
+
     FROM companies c
-    JOIN financial_ratios f
-        ON c.id = f.company_id
-    JOIN profitandloss p
-        ON c.id = p.company_id
-       AND f.year = p.year
     WHERE c.id = ?
-    ORDER BY f.year DESC
-    LIMIT 1
     """
 
     df = pd.read_sql_query(
@@ -58,7 +100,6 @@ def load_company_data(company_id="ABB"):
     conn.close()
 
     return df
-
 def format_number(value, decimals=2):
     if pd.isna(value):
         return "N/A"
@@ -70,8 +111,9 @@ def generate_tearsheet(company_id="ABB"):
     df = load_company_data(company_id)
 
     if df.empty:
-        print(f"No data found for company: {company_id}")
-        return
+        raise ValueError(
+        f"No matching financial data found for company: {company_id}"
+    )
 
     row = df.iloc[0]
 
