@@ -201,7 +201,74 @@ def generate_tearsheet(company_id="ABB"):
 
     print("Day 33 real-data PDF created successfully.")
     print("Created:", output_file)
+def generate_all_tearsheets():
+    conn = sqlite3.connect(DB_FILE)
 
+    companies = pd.read_sql_query(
+        """
+        SELECT id, company_name
+        FROM companies
+        ORDER BY id
+        """,
+        conn,
+    )
+
+    conn.close()
+
+    success_count = 0
+    failed_companies = []
+
+    for _, company in companies.iterrows():
+        company_id = company["id"]
+
+        try:
+            generate_tearsheet(company_id)
+            success_count += 1
+
+        except Exception as error:
+            failed_companies.append(
+                {
+                    "company_id": company_id,
+                    "company_name": company["company_name"],
+                    "error": str(error),
+                }
+            )
+
+            print(
+                f"Failed: {company_id} - {error}"
+            )
+
+    failures_df = pd.DataFrame(
+        failed_companies,
+        columns=[
+            "company_id",
+            "company_name",
+            "error",
+        ],
+    )
+
+    failures_file = (
+        PROJECT_ROOT
+        / "output"
+        / "tearsheet_failures.csv"
+    )
+
+    failures_file.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    failures_df.to_csv(
+        failures_file,
+        index=False,
+    )
+
+    print()
+    print("Day 34 batch generation completed.")
+    print("Total companies:", len(companies))
+    print("PDFs created:", success_count)
+    print("Failures:", len(failed_companies))
+    print("Failure report:", failures_file)
 
 if __name__ == "__main__":
-    generate_tearsheet("ABB")
+    generate_all_tearsheets()
